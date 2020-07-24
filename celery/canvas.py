@@ -276,7 +276,7 @@ class Signature(dict):
     partial = clone
 
     def freeze(self, _id=None, group_id=None, chord=None,
-               root_id=None, parent_id=None):
+               root_id=None, parent_id=None, group_index=None):
         """Finalize the signature by adding a concrete task id.
 
         The task won't be called and you shouldn't call the signature
@@ -303,6 +303,8 @@ class Signature(dict):
             opts['group_id'] = group_id
         if chord:
             opts['chord'] = chord
+        if group_index is not None:
+            opts['group_index'] = group_index
         # pylint: disable=too-many-function-args
         #   Borks on this, as it's a property.
         return self.AsyncResult(tid)
@@ -408,8 +410,12 @@ class Signature(dict):
             other = maybe_unroll_group(other)
             if isinstance(self, _chain):
                 # chain | group() -> chain
+                tasks = self.unchain_tasks()
+                if not tasks:
+                    # If the chain is empty, return the group
+                    return other
                 return _chain(seq_concat_item(
-                    self.unchain_tasks(), other), app=self._app)
+                    tasks, other), app=self._app)
             # task | group() -> chain
             return _chain(self, other, app=self.app)
 
@@ -622,7 +628,7 @@ class _chain(Signature):
         return signature
 
     def unchain_tasks(self):
-        # Clone chain's tasks assigning sugnatures from link_error
+        # Clone chain's tasks assigning signatures from link_error
         # to each task
         tasks = [t.clone() for t in self.tasks]
         for sig in self.options.get('link_error', []):
@@ -670,19 +676,21 @@ class _chain(Signature):
             return results[0]
 
     def freeze(self, _id=None, group_id=None, chord=None,
-               root_id=None, parent_id=None):
+               root_id=None, parent_id=None, group_index=None):
         # pylint: disable=redefined-outer-name
         #   XXX chord is also a class in outer scope.
         _, results = self._frozen = self.prepare_steps(
             self.args, self.kwargs, self.tasks, root_id, parent_id, None,
             self.app, _id, group_id, chord, clone=False,
+            group_index=group_index,
         )
         return results[0]
 
     def prepare_steps(self, args, kwargs, tasks,
                       root_id=None, parent_id=None, link_error=None, app=None,
                       last_task_id=None, group_id=None, chord_body=None,
-                      clone=True, from_dict=Signature.from_dict):
+                      clone=True, from_dict=Signature.from_dict,
+                      group_index=None):
         app = app or self.app
         # use chain message field for protocol 2 and later.
         # this avoids pickle blowing the stack on the recursion
@@ -759,6 +767,7 @@ class _chain(Signature):
                 res = task.freeze(
                     last_task_id,
                     root_id=root_id, group_id=group_id, chord=chord_body,
+                    group_index=group_index,
                 )
             else:
                 res = task.freeze(root_id=root_id)
@@ -878,7 +887,9 @@ class chain(_chain):
         if not kwargs and tasks:
             if len(tasks) != 1 or is_list(tasks[0]):
                 tasks = tasks[0] if len(tasks) == 1 else tasks
-                return reduce(operator.or_, tasks)
+                # if is_list(tasks) and len(tasks) == 1:
+                #     return super(chain, cls).__new__(cls, tasks, **kwargs)
+                return reduce(operator.or_, tasks, chain())
         return super(chain, cls).__new__(cls, *tasks, **kwargs)
 
 
@@ -1183,7 +1194,7 @@ class group(Signature):
         return options, group_id, options.get('root_id')
 
     def freeze(self, _id=None, group_id=None, chord=None,
-               root_id=None, parent_id=None):
+               root_id=None, parent_id=None, group_index=None):
         # pylint: disable=redefined-outer-name
         #   XXX chord is also a class in outer scope.
         opts = self.options
@@ -1195,6 +1206,8 @@ class group(Signature):
             opts['group_id'] = group_id
         if chord:
             opts['chord'] = chord
+        if group_index is not None:
+            opts['group_index'] = group_index
         root_id = opts.setdefault('root_id', root_id)
         parent_id = opts.setdefault('parent_id', parent_id)
         new_tasks = []
@@ -1215,6 +1228,7 @@ class group(Signature):
         # pylint: disable=redefined-outer-name
         #   XXX chord is also a class in outer scope.
         stack = deque(self.tasks)
+        group_index = 0
         while stack:
             task = maybe_signature(stack.popleft(), app=self._app).clone()
             if isinstance(task, group):
@@ -1223,7 +1237,9 @@ class group(Signature):
                 new_tasks.append(task)
                 yield task.freeze(group_id=group_id,
                                   chord=chord, root_id=root_id,
-                                  parent_id=parent_id)
+                                  parent_id=parent_id,
+                                  group_index=group_index)
+                group_index += 1
 
     def __repr__(self):
         if self.tasks:
@@ -1302,17 +1318,16 @@ class chord(Signature):
         return self.apply_async((), {'body': body} if body else {}, **options)
 
     def freeze(self, _id=None, group_id=None, chord=None,
-               root_id=None, parent_id=None):
+               root_id=None, parent_id=None, group_index=None):
         # pylint: disable=redefined-outer-name
         #   XXX chord is also a class in outer scope.
         if not isinstance(self.tasks, group):
             self.tasks = group(self.tasks, app=self.app)
         header_result = self.tasks.freeze(
             parent_id=parent_id, root_id=root_id, chord=self.body)
-
         body_result = self.body.freeze(
-            _id, root_id=root_id, chord=chord, group_id=group_id)
-
+            _id, root_id=root_id, chord=chord, group_id=group_id,
+            group_index=group_index)
         # we need to link the body result back to the group result,
         # but the body may actually be a chain,
         # so find the first result without a parent
@@ -1346,8 +1361,14 @@ class chord(Signature):
             with allow_join_result():
                 return self.apply(args, kwargs,
                                   body=body, task_id=task_id, **options)
+
+        merged_options = dict(self.options, **options) if options else self.options
+        option_task_id = merged_options.pop("task_id", None)
+        if task_id is None:
+            task_id = option_task_id
+
         # chord([A, B, ...], C)
-        return self.run(tasks, body, args, task_id=task_id, **options)
+        return self.run(tasks, body, args, task_id=task_id, **merged_options)
 
     def apply(self, args=None, kwargs=None,
               propagate=True, body=None, **options):
@@ -1366,6 +1387,8 @@ class chord(Signature):
             task = stack.popleft()
             if isinstance(task, group):
                 stack.extend(task.tasks)
+            elif isinstance(task, _chain) and isinstance(task.tasks[-1], group):
+                stack.extend(task.tasks[-1].tasks)
             else:
                 yield task if value is None else value
 

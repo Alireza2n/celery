@@ -269,6 +269,10 @@ class test_chunks(CanvasCase):
 
 class test_chain(CanvasCase):
 
+    def test_chain_of_chain_with_a_single_task(self):
+        s = self.add.s(1, 1)
+        assert chain([chain(s)]).tasks == list(chain(s).tasks)
+
     def test_clone_preserves_state(self):
         x = chain(self.add.s(i, i) for i in range(10))
         assert x.clone().tasks == x.tasks
@@ -742,6 +746,13 @@ class test_chord(CanvasCase):
         x = chord([t1], body=t1)
         assert x.app is current_app
 
+    def test_chord_size_with_groups(self):
+        x = chord([
+            self.add.s(2, 2) | group([self.add.si(2, 2), self.add.si(2, 2)]),
+            self.add.s(2, 2) | group([self.add.si(2, 2), self.add.si(2, 2)]),
+        ], body=self.add.si(2, 2))
+        assert x.__length_hint__() == 4
+
     def test_set_immutable(self):
         x = chord([Mock(name='t1'), Mock(name='t2')], app=self.app)
         x.set_immutable(True)
@@ -764,6 +775,23 @@ class test_chord(CanvasCase):
         assert repr(x)
         x.kwargs['body'] = None
         assert 'without body' in repr(x)
+
+    def test_freeze_tasks_body_is_group(self):
+        # Confirm that `group index` is passed from a chord to elements of its
+        # body when the chord itself is encapsulated in a group
+        body_elem = self.add.s()
+        chord_body = group([body_elem])
+        chord_obj = chord(self.add.s(), body=chord_body)
+        top_group = group([chord_obj])
+        # We expect the body to be the signature we passed in before we freeze
+        (embedded_body_elem, ) = chord_obj.body.tasks
+        assert embedded_body_elem is body_elem
+        assert embedded_body_elem.options == dict()
+        # When we freeze the chord, its body will be clones and options set
+        top_group.freeze()
+        (embedded_body_elem, ) = chord_obj.body.tasks
+        assert embedded_body_elem is not body_elem
+        assert embedded_body_elem.options["group_index"] == 0   # 0th task
 
     def test_freeze_tasks_is_not_group(self):
         x = chord([self.add.s(2, 2)], body=self.add.s(), app=self.app)

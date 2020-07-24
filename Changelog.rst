@@ -4,9 +4,103 @@
  Change history
 ================
 
-This document contains change notes for bugfix releases in
-the 4.x series, please see :ref:`whatsnew-4.4` for
+This document contains change notes for bugfix & new features
+in the 4.4.x series, please see :ref:`whatsnew-4.4` for
 an overview of what's new in Celery 4.4.
+
+4.4.6
+=======
+:release-date: 2020-06-24 2.40 P.M UTC+6:00
+:release-by: Asif Saif Uddin
+
+- Remove autoscale force_scale methods (#6085).
+- Fix autoscale test
+- Pass ping destination to request
+- chord: merge init options with run options
+- Put back KeyValueStoreBackend.set method without state
+- Added --range-prefix option to `celery multi` (#6180) 
+- Added as_list function to AsyncResult class (#6179)
+- Fix CassandraBackend error in threads or gevent pool (#6147)
+- Kombu 4.6.11
+
+
+4.4.5
+=======
+:release-date: 2020-06-08 12.15 P.M UTC+6:00
+:release-by: Asif Saif Uddin
+
+- Add missing dependency on future (#6146).
+- ElasticSearch: Retry index if document was deleted between index
+- fix windows build
+- Customize the retry interval of chord_unlock tasks
+- fix multi tests in local
+
+
+4.4.4
+=======
+:release-date: 2020-06-03 11.00 A.M UTC+6:00
+:release-by: Asif Saif Uddin
+
+- Fix autoretry_for with explicit retry (#6138).
+- Kombu 4.6.10
+- Use Django DB max age connection setting (fixes #4116).
+- Add retry on recoverable exception for the backend (#6122).
+- Fix random distribution of jitter for exponential backoff.
+- ElasticSearch: add setting to save meta as json.
+- fix #6136. celery 4.4.3 always trying create /var/run/celery directory.
+- Add task_internal_error signal (#6049). 
+
+
+4.4.3
+=======
+:release-date: 2020-06-01 4.00 P.M UTC+6:00
+:release-by: Asif Saif Uddin
+
+- Fix backend utf-8 encoding in s3 backend .
+- Kombu 4.6.9
+- Task class definitions can have retry attributes (#5869)
+- Upgraded pycurl to the latest version that supports wheel.
+- Add uptime to the stats inspect command
+- Fixing issue #6019: unable to use mysql SSL parameters when getting
+- Clean TraceBack to reduce memory leaks for exception task (#6024)
+- exceptions: NotRegistered: fix up language
+- Give up sending a worker-offline message if transport is not connected
+- Add Task to __all__ in celery.__init__.py
+- Ensure a single chain object in a chain does not raise MaximumRecursion
+- Fix autoscale when prefetch_multiplier is 1
+- Allow start_worker to function without ping task
+- Update celeryd.conf
+- Fix correctly handle configuring the serializer for always_eager mode.
+- Remove doubling of prefetch_count increase when prefetch_multiplier
+- Fix eager function not returning result after retries
+- return retry result if not throw and is_eager
+- Always requeue while worker lost regardless of the redelivered flag
+- Allow relative paths in the filesystem backend (#6070)
+- [Fixed Issue #6017]
+- Avoid race condition due to task duplication.
+- Exceptions must be old-style classes or derived from BaseException
+- Fix windows build (#6104) 
+- Add encode to meta task in base.py (#5894)
+- Update time.py to solve the microsecond issues (#5199)
+- Change backend _ensure_not_eager error to warning
+- Add priority support for 'celery.chord_unlock' task (#5766)
+- Change eager retry behaviour
+- Avoid race condition in elasticsearch backend
+- backends base get_many pass READY_STATES arg
+- Add integration tests for Elasticsearch and fix _update
+- feat(backend): Adds cleanup to ArangoDB backend
+- remove jython check
+- fix filesystem backend cannot not be serialized by picked 
+
+4.4.0
+=======
+:release-date: 2019-12-16 9.45 A.M UTC+6:00
+:release-by: Asif Saif Uddin
+
+- This version is officially supported on CPython 2.7,
+  3.5, 3.6, 3.7 & 3.8 and is also supported on PyPy2 & PyPy3.
+- Kombu 4.6.7
+- Task class definitions can have retry attributes (#5869)
 
 
 4.4.0rc5
@@ -21,7 +115,7 @@ an overview of what's new in Celery 4.4.
 - Add auto expiry for DynamoDB backend (#5805)
 - Store extending result in all backends (#5661)
 - Fix a race condition when publishing a very large chord header (#5850)
-- Improve docs and test matrix 
+- Improve docs and test matrix
 
 4.4.0rc4
 ========

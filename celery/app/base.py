@@ -2,6 +2,7 @@
 """Actual App instance implementation."""
 from __future__ import absolute_import, unicode_literals
 
+import inspect
 import os
 import threading
 import warnings
@@ -16,7 +17,6 @@ from kombu.utils.compat import register_after_fork
 from kombu.utils.objects import cached_property
 from kombu.utils.uuid import uuid
 from vine import starpromise
-from vine.utils import wraps
 
 from celery import platforms, signals
 from celery._state import (_announce_app_finalized, _deregister_app,
@@ -35,8 +35,7 @@ from celery.utils.functional import first, head_from_fun, maybe_list
 from celery.utils.imports import gen_task_name, instantiate, symbol_by_name
 from celery.utils.log import get_logger
 from celery.utils.objects import FallbackContext, mro_lookup
-from celery.utils.time import (get_exponential_backoff_interval, timezone,
-                               to_utc)
+from celery.utils.time import timezone, to_utc
 
 # Load all builtin tasks
 from . import builtins  # noqa
@@ -44,6 +43,7 @@ from . import backends
 from .annotations import prepare as prepare_annotations
 from .defaults import DEFAULT_SECURITY_DIGEST, find_deprecated_settings
 from .registry import TaskRegistry
+from .autoretry import add_autoretry_behaviour
 from .utils import (AppPickler, Settings, _new_key_to_old, _old_key_to_new,
                     _unpickle_app, _unpickle_app_v2, appstr, bugreport,
                     detect_settings)
@@ -369,6 +369,9 @@ class Celery(object):
     def task(self, *args, **opts):
         """Decorator to create a task class out of any callable.
 
+        See :ref:`Task options<task-options>` for a list of the
+        arguments that can be passed to this decorator.
+
         Examples:
             .. code-block:: python
 
@@ -459,30 +462,7 @@ class Celery(object):
                 pass
             self._tasks[task.name] = task
             task.bind(self)  # connects task to this app
-
-            autoretry_for = tuple(options.get('autoretry_for', ()))
-            retry_kwargs = options.get('retry_kwargs', {})
-            retry_backoff = int(options.get('retry_backoff', False))
-            retry_backoff_max = int(options.get('retry_backoff_max', 600))
-            retry_jitter = options.get('retry_jitter', True)
-
-            if autoretry_for and not hasattr(task, '_orig_run'):
-
-                @wraps(task.run)
-                def run(*args, **kwargs):
-                    try:
-                        return task._orig_run(*args, **kwargs)
-                    except autoretry_for as exc:
-                        if retry_backoff:
-                            retry_kwargs['countdown'] = \
-                                get_exponential_backoff_interval(
-                                    factor=retry_backoff,
-                                    retries=task.request.retries,
-                                    maximum=retry_backoff_max,
-                                    full_jitter=retry_jitter)
-                        raise task.retry(exc=exc, **retry_kwargs)
-
-                task._orig_run, task.run = task.run, run
+            add_autoretry_behaviour(task, **options)
         else:
             task = self._tasks[name]
         return task
@@ -495,10 +475,12 @@ class Celery(object):
             style task classes, you should not need to use this for
             new projects.
         """
+        task = inspect.isclass(task) and task() or task
         if not task.name:
             task_cls = type(task)
             task.name = self.gen_task_name(
                 task_cls.__name__, task_cls.__module__)
+        add_autoretry_behaviour(task)
         self.tasks[task.name] = task
         task._app = self
         task.bind(self)
@@ -698,7 +680,8 @@ class Celery(object):
                   eta=None, task_id=None, producer=None, connection=None,
                   router=None, result_cls=None, expires=None,
                   publisher=None, link=None, link_error=None,
-                  add_to_parent=True, group_id=None, retries=0, chord=None,
+                  add_to_parent=True, group_id=None, group_index=None,
+                  retries=0, chord=None,
                   reply_to=None, time_limit=None, soft_time_limit=None,
                   root_id=None, parent_id=None, route_name=None,
                   shadow=None, chain=None, task_type=None, **options):
@@ -738,7 +721,7 @@ class Celery(object):
                                        parent.request.delivery_info.get('priority'))
 
         message = amqp.create_task_message(
-            task_id, name, args, kwargs, countdown, eta, group_id,
+            task_id, name, args, kwargs, countdown, eta, group_id, group_index,
             expires, retries, chord,
             maybe_list(link), maybe_list(link_error),
             reply_to or self.oid, time_limit, soft_time_limit,
